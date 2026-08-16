@@ -1,0 +1,370 @@
+:root {
+  --g-blue: 66, 133, 244;
+  --g-red: 217, 101, 112;
+  --g-green: 52, 168, 83;
+  --g-yellow: 249, 171, 0;
+  --surface: rgba(32, 33, 36, 0.94);
+  --surface-solid: #202124;
+  --on-surface: #e8eaed;
+  --on-surface-dim: #9aa0a6;
+  --link: #a8c7fa;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; user-select: none; }
+
+/* explicit display values below must not defeat the hidden attribute */
+[hidden] { display: none !important; }
+
+/* transparent so the frozen shot covers the identical live screen seamlessly,
+   and music mode can show the live desktop with no screenshot at all */
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+  font-family: "Google Sans", "Segoe UI Variable Text", "Segoe UI", Roboto, sans-serif;
+}
+
+/* music mode: the window itself shrinks to just the card (a fullscreen
+   overlay would make Chrome freeze video rendering as "occluded"); the rest
+   of the desktop stays live and clickable */
+body.music :is(#shot, #dim, #edge-glow, #bloom, #toolbar, #hint, #lasso, #translate-layer, #sheet) {
+  display: none;
+}
+body.music #music-ui { background: transparent; }
+
+#shot {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+  transition: opacity 260ms ease;
+}
+
+#dim {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  background: #000;
+  opacity: 0;
+  transition: opacity 320ms ease;
+  pointer-events: none;
+}
+body.ready #dim { opacity: 0.2; }
+body.sheet #dim { opacity: 0.32; }
+
+/*
+ * Invocation wash, per Google's Circle to Search: big blurred pastel color
+ * fields drifting around the screen perimeter, center kept readable by a
+ * radial mask, plus a white bloom rising from the bottom edge on entry.
+ */
+@property --wash-angle {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+#edge-glow {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+  opacity: 0;
+  --wash-angle: 0deg;
+  background:
+    radial-gradient(52% 48% at calc(50% + 48% * cos(var(--wash-angle))) calc(50% + 48% * sin(var(--wash-angle))), rgba(var(--g-blue), 0.75), transparent 70%),
+    radial-gradient(50% 46% at calc(50% + 48% * cos(calc(var(--wash-angle) + 90deg))) calc(50% + 48% * sin(calc(var(--wash-angle) + 90deg))), rgba(var(--g-green), 0.6), transparent 70%),
+    radial-gradient(52% 48% at calc(50% + 48% * cos(calc(var(--wash-angle) + 180deg))) calc(50% + 48% * sin(calc(var(--wash-angle) + 180deg))), rgba(var(--g-red), 0.58), transparent 70%),
+    radial-gradient(50% 46% at calc(50% + 48% * cos(calc(var(--wash-angle) + 270deg))) calc(50% + 48% * sin(calc(var(--wash-angle) + 270deg))), rgba(var(--g-yellow), 0.52), transparent 70%),
+    radial-gradient(60% 36% at 50% 104%, rgba(255, 255, 255, 0.45), transparent 72%);
+  filter: blur(48px) saturate(1.4);
+  /* wider-than-tall mask: wash reads strongest at top/bottom edges, center stays clear */
+  mask: radial-gradient(66% 50% at 50% 50%, transparent 52%, rgba(0, 0, 0, 0.75) 78%, #000 96%);
+}
+body.ready #edge-glow {
+  animation: wash-orbit 14s linear infinite, wash-enter 1200ms ease-out forwards;
+}
+@keyframes wash-orbit { to { --wash-angle: 360deg; } }
+@keyframes wash-enter {
+  0% { opacity: 0; }
+  45% { opacity: 1; }
+  100% { opacity: 0.75; }
+}
+
+/* stronger white bloom from the bottom for the first moment of invocation */
+#bloom {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+  opacity: 0;
+  background: radial-gradient(70% 46% at 50% 106%, rgba(255, 255, 255, 0.5), transparent 70%);
+  filter: blur(40px);
+}
+body.ready #bloom { animation: bloom-in 1100ms ease-out forwards; }
+@keyframes bloom-in {
+  0% { opacity: 0; transform: translateY(60px); }
+  35% { opacity: 1; transform: translateY(0); }
+  100% { opacity: 0; transform: translateY(-10px); }
+}
+
+#lasso {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  cursor: none;
+}
+
+#hint {
+  position: fixed;
+  bottom: 108px;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(10px);
+  transition: opacity 400ms ease 250ms, transform 400ms ease 250ms;
+}
+body.ready:not(.selected):not(.busy):not(.sheet) #hint { opacity: 1; transform: none; }
+.hint-pill {
+  padding: 10px 20px;
+  border-radius: 100px;
+  background: rgba(32, 33, 36, 0.8);
+  backdrop-filter: blur(12px);
+  color: #e8eaed;
+  font-size: 14px;
+}
+
+#toolbar {
+  position: fixed;
+  bottom: 32px;
+  left: 50%;
+  transform: translate(-50%, 90px);
+  display: flex;
+  gap: 2px;
+  padding: 8px;
+  border-radius: 100px;
+  background: var(--surface);
+  backdrop-filter: blur(20px);
+  box-shadow: 0 6px 26px rgba(0, 0, 0, 0.45);
+  opacity: 0;
+  transition: transform 420ms cubic-bezier(0.05, 0.7, 0.1, 1), opacity 300ms ease;
+}
+body.ready #toolbar { transform: translate(-50%, 0); opacity: 1; }
+body.sheet #toolbar { opacity: 0; pointer-events: none; }
+.tb-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 18px;
+  border: 0;
+  border-radius: 100px;
+  background: transparent;
+  color: var(--on-surface);
+  font: 500 14px/1 inherit;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 150ms ease, color 150ms ease;
+}
+.tb-btn:hover { background: rgba(232, 234, 237, 0.08); }
+.tb-btn.active { background: #a8c7fa; color: #202124; }
+.tb-btn:focus-visible { outline: 2px solid rgb(var(--g-blue)); outline-offset: 1px; }
+
+#status-chip {
+  position: fixed;
+  top: 28px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 18px;
+  border-radius: 100px;
+  background: var(--surface);
+  color: var(--on-surface);
+  font-size: 14px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.4);
+  animation: pop-in 240ms cubic-bezier(0.05, 0.7, 0.1, 1);
+}
+.spinner {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid rgba(232, 234, 237, 0.25);
+  border-top-color: #a8c7fa;
+  animation: spin 700ms linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes pop-in {
+  from { opacity: 0; transform: translateX(-50%) scale(0.9); }
+  to { opacity: 1; transform: translateX(-50%) scale(1); }
+}
+
+#translate-layer {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+}
+.tr-line {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  border-radius: 3px;
+  overflow: hidden;
+  white-space: nowrap;
+  box-shadow: 0 0 0 2px var(--tr-bg, #fff);
+  animation: tr-in 260ms ease both;
+}
+@keyframes tr-in { from { opacity: 0; filter: blur(4px); } to { opacity: 1; filter: none; } }
+
+/* Google-style results bottom sheet; the Lens page renders in a native
+   WebContentsView that main positions over .sheet-body */
+#sheet {
+  position: fixed;
+  left: 50%;
+  bottom: 0;
+  transform: translate(-50%, 105%);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-solid);
+  border-radius: 24px 24px 0 0;
+  box-shadow: 0 -8px 44px rgba(0, 0, 0, 0.55);
+  transition: transform 420ms cubic-bezier(0.05, 0.7, 0.1, 1);
+}
+body.sheet #sheet { transform: translate(-50%, 0); }
+.sheet-header {
+  position: relative;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.sheet-handle {
+  width: 32px;
+  height: 4px;
+  border-radius: 2px;
+  background: #5f6368;
+}
+#sheet-close {
+  position: absolute;
+  right: 10px;
+  top: 4px;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--on-surface-dim);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+#sheet-close:hover { background: rgba(232, 234, 237, 0.08); color: var(--on-surface); }
+.sheet-body {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.sheet-body .spinner { width: 26px; height: 26px; border-width: 3px; }
+
+#music-ui {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.25);
+}
+#music-listening, #music-result {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  padding: 34px 44px;
+  border-radius: 28px;
+  background: var(--surface);
+  backdrop-filter: blur(20px);
+  color: var(--on-surface);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+  animation: pop-center 320ms cubic-bezier(0.05, 0.7, 0.1, 1);
+}
+@keyframes pop-center { from { opacity: 0; transform: scale(0.85); } to { opacity: 1; transform: scale(1); } }
+#music-listening p { font-size: 16px; font-weight: 500; }
+.pulse-rings {
+  position: relative;
+  width: 92px;
+  height: 92px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  background: linear-gradient(135deg, rgb(var(--g-blue)), #9b72cb);
+  border-radius: 50%;
+}
+.pulse-rings span {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 2px solid rgb(var(--g-blue));
+  animation: ring 2.1s ease-out infinite;
+  opacity: 0;
+}
+.pulse-rings span:nth-child(2) { animation-delay: 0.7s; }
+.pulse-rings span:nth-child(3) { animation-delay: 1.4s; }
+@keyframes ring {
+  0% { transform: scale(1); opacity: 0.7; }
+  100% { transform: scale(1.9); opacity: 0; }
+}
+
+#music-result { flex-direction: row; gap: 20px; padding: 24px 30px; }
+#music-cover {
+  width: 84px;
+  height: 84px;
+  border-radius: 14px;
+  object-fit: cover;
+  background: #3c4043;
+}
+.music-meta { max-width: 340px; }
+#music-title { font-size: 18px; font-weight: 600; }
+#music-artist { font-size: 14px; color: var(--on-surface-dim); margin-top: 4px; }
+.music-actions { display: flex; flex-direction: column; gap: 6px; }
+.text-btn {
+  border: 0;
+  background: transparent;
+  color: var(--link);
+  font: 500 14px/1 inherit;
+  font-family: inherit;
+  padding: 9px 14px;
+  border-radius: 100px;
+  cursor: pointer;
+}
+.text-btn:hover { background: rgba(168, 199, 250, 0.1); }
+
+#toast {
+  position: fixed;
+  bottom: 110px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 12px 22px;
+  border-radius: 10px;
+  background: #2d2e31;
+  color: #e8eaed;
+  font-size: 14px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.5);
+  animation: pop-in 240ms ease;
+  max-width: 70vw;
+  text-align: center;
+}
+
+body.closing { transition: opacity 200ms ease; opacity: 0; }

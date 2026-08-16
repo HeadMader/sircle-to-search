@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; img-src 'self' blob: data: https:; style-src 'self'; media-src blob:" />
+  <title>Sircle to Search</title>
+  <link rel="stylesheet" href="overlay.css" />
+</head>
+<body>
+  <img id="shot" alt="" draggable="false" />
+  <div id="dim"></div>
+  <div id="edge-glow"></div>
+  <div id="bloom"></div>
+  <canvas id="lasso"></canvas>
+  <div id="translate-layer" hidden></div>
+
+  <div id="sheet" role="dialog" aria-label="Search results">
+    <div class="sheet-header">
+      <div class="sheet-handle"></div>
+      <button id="sheet-close" aria-label="Close results">✕</button>
+    </div>
+    <div class="sheet-body"><span class="spinner" id="sheet-spinner"></span></div>
+  </div>
+
+  <div id="hint" role="status">
+    <span class="hint-pill">Circle or tap anything to search · Esc to close</span>
+  </div>
+
+  <div id="status-chip" hidden>
+    <span class="spinner"></span><span id="status-text">Searching…</span>
+  </div>
+
+  <div id="toolbar" role="toolbar" aria-label="Actions">
+    <button id="btn-search" class="tb-btn active" aria-label="Search">
+      <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 1 0-.7.7l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0A4.5 4.5 0 1 1 14 9.5A4.5 4.5 0 0 1 9.5 14z"/></svg>
+      <span>Search</span>
+    </button>
+    <button id="btn-translate" class="tb-btn" aria-label="Translate screen">
+      <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="m12.87 15.07l-2.54-2.51l.03-.03A17.5 17.5 0 0 0 14.07 6H17V4h-7V2H8v2H1v2h11.17C11.5 7.92 10.44 9.75 9 11.35C8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5l3.11 3.11l.76-2.04zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2l-4.5-12zm-2.62 7l1.62-4.33L19.12 17h-3.24z"/></svg>
+      <span>Translate</span>
+    </button>
+    <button id="btn-music" class="tb-btn" aria-label="Identify music">
+      <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6z"/></svg>
+      <span>Music</span>
+    </button>
+  </div>
+
+  <div id="music-ui" hidden>
+    <div id="music-listening">
+      <div class="pulse-rings"><span></span><span></span><span></span>
+        <svg viewBox="0 0 24 24" width="34" height="34" aria-hidden="true"><path fill="currentColor" d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6z"/></svg>
+      </div>
+      <p>Listening…</p>
+      <button id="music-cancel" class="text-btn">Cancel</button>
+    </div>
+    <div id="music-result" hidden>
+      <img id="music-cover" alt="" />
+      <div class="music-meta">
+        <p id="music-title"></p>
+        <p id="music-artist"></p>
+      </div>
+      <div class="music-actions">
+        <button id="music-open" class="text-btn">Open</button>
+        <button id="music-retry" class="text-btn">Retry</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" role="alert" hidden></div>
+
+  <script src="overlay.js"></script>
+</body>
+</html>
