@@ -51,9 +51,10 @@ async function save() {
   flashSaved();
 }
 
-translateTarget.addEventListener('change', () => void save().catch(console.error));
-launchStartup.addEventListener('change', () => void save().catch(console.error));
-for (const r of modeRadios) r.addEventListener('change', () => void save().catch(console.error));
+const onChange = () => void save().catch(console.error);
+for (const el of [translateTarget, launchStartup, ...modeRadios]) {
+  el.addEventListener('change', onChange);
+}
 
 void bridge
   .get()

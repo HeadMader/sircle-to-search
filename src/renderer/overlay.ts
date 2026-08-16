@@ -30,11 +30,14 @@ const textActions = $<HTMLDivElement>('text-actions');
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 type Point = { x: number; y: number };
-type Mode = 'search' | 'translate';
+type Mode = OverlayInit['defaultMode'];
+type Rect = { x: number; y: number; w: number; h: number };
+/** one pointer gesture at a time: lasso drawing or text-selection dragging */
+type Gesture = 'none' | 'lasso' | 'text';
 
 let init: OverlayInit | null = null;
 let mode: Mode = 'search';
-let drawing = false;
+let gesture: Gesture = 'none';
 let points: Point[] = [];
 let selection: Point[] | null = null;
 let busy = false;
@@ -55,7 +58,7 @@ bridge.onInit((payload) => {
   const bytes = raw instanceof Uint8Array ? raw : new Uint8Array(raw as ArrayBufferLike);
   const copy = bytes.slice();
   const blob = new Blob([copy.buffer as ArrayBuffer], { type: 'image/png' });
-  if (payload.defaultMode) setMode(payload.defaultMode);
+  setMode(payload.defaultMode);
   shot.onload = () => {
     shotCanvas.width = shot.naturalWidth;
     shotCanvas.height = shot.naturalHeight;
@@ -137,7 +140,6 @@ interface Word {
 
 let words: Word[] = [];
 let textSel: { anchor: number; focus: number } | null = null;
-let textDragging = false;
 
 async function loadTextMap() {
   try {
@@ -229,8 +231,14 @@ function selectedText(): string {
 
 function clearTextSel() {
   textSel = null;
-  textDragging = false;
   textActions.hidden = true;
+}
+
+function clearAllSelections() {
+  clearTextSel();
+  clearTranslations();
+  selection = null;
+  document.body.classList.remove('selected');
 }
 
 function showTextActions() {
@@ -254,18 +262,9 @@ $<HTMLButtonElement>('ta-copy').addEventListener('click', () => {
 });
 $<HTMLButtonElement>('ta-search').addEventListener('click', () => {
   const query = selectedText().replace(/\n/g, ' ');
-  if (!query || busy) return;
-  setBusy(true);
-  const rect = openSheet();
+  if (!query) return;
   textActions.hidden = true;
-  bridge
-    .textSearch(query, rect)
-    .then(() => (sheetSpinner.hidden = true))
-    .catch(() => {
-      closeSheet();
-      showToast('Search failed. Check your connection and try again.');
-    })
-    .finally(() => setBusy(false));
+  void searchInSheet((rect) => bridge.textSearch(query, rect));
 });
 
 /* ---------- lasso drawing ---------- */
@@ -331,75 +330,73 @@ window.addEventListener('pointermove', (e) => {
     pointerPos = null;
     return;
   }
-  const overText = !drawing && wordAt(e.clientX, e.clientY) !== null;
+  const overText = gesture !== 'lasso' && wordAt(e.clientX, e.clientY) !== null;
   canvas.style.cursor = overText ? 'text' : 'none';
   pointerPos = overText ? null : { x: e.clientX, y: e.clientY };
 });
 window.addEventListener('pointerleave', () => (pointerPos = null));
 
-let lastFrame = performance.now();
-function frame(now: number) {
-  const dt = now - lastFrame;
-  lastFrame = now;
-  ctx.clearRect(0, 0, innerWidth, innerHeight);
+/** per-line highlight rects, like regular text selection */
+function drawTextHighlight() {
+  if (!textSel) return;
+  const byLine = new Map<number, { x0: number; y0: number; x1: number; y1: number }>();
+  for (const w of selectedWords()) {
+    const r = byLine.get(w.lineIdx);
+    if (!r) byLine.set(w.lineIdx, { x0: w.x0, y0: w.y0, x1: w.x1, y1: w.y1 });
+    else {
+      r.x0 = Math.min(r.x0, w.x0);
+      r.y0 = Math.min(r.y0, w.y0);
+      r.x1 = Math.max(r.x1, w.x1);
+      r.y1 = Math.max(r.y1, w.y1);
+    }
+  }
+  ctx.save();
+  ctx.fillStyle = 'rgba(138, 180, 248, 0.4)';
+  for (const r of byLine.values()) {
+    ctx.beginPath();
+    ctx.roundRect(r.x0 - 2, r.y0 - 2, r.x1 - r.x0 + 4, r.y1 - r.y0 + 4, 3);
+    ctx.fill();
+  }
+  ctx.restore();
+}
 
-  if (textSel) {
-    // per-line highlight rects, like regular text selection
-    const byLine = new Map<number, { x0: number; y0: number; x1: number; y1: number }>();
-    for (const w of selectedWords()) {
-      const r = byLine.get(w.lineIdx);
-      if (!r) byLine.set(w.lineIdx, { x0: w.x0, y0: w.y0, x1: w.x1, y1: w.y1 });
-      else {
-        r.x0 = Math.min(r.x0, w.x0);
-        r.y0 = Math.min(r.y0, w.y0);
-        r.x1 = Math.max(r.x1, w.x1);
-        r.y1 = Math.max(r.y1, w.y1);
-      }
-    }
+function drawLasso(now: number) {
+  const active = gesture === 'lasso';
+  const activePts = active ? points : selection;
+  if (!activePts || activePts.length < 2) return;
+  const path = pathFrom(activePts, !active);
+
+  if (!active && selection) {
+    // spotlight: darken everything outside the selection
     ctx.save();
-    ctx.fillStyle = 'rgba(138, 180, 248, 0.4)';
-    for (const r of byLine.values()) {
-      ctx.beginPath();
-      ctx.roundRect(r.x0 - 2, r.y0 - 2, r.x1 - r.x0 + 4, r.y1 - r.y0 + 4, 3);
-      ctx.fill();
-    }
+    ctx.fillStyle = 'rgba(0,0,0,0.28)';
+    ctx.fillRect(0, 0, innerWidth, innerHeight);
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.fill(path);
+    ctx.restore();
+    ctx.save();
+    ctx.fillStyle = 'rgba(255,255,255,0.05)';
+    ctx.fill(path);
     ctx.restore();
   }
 
-  const activePts = drawing ? points : selection;
-  if (activePts && activePts.length > 1) {
-    const path = pathFrom(activePts, !drawing);
+  const pulse = reducedMotion ? 1 : 0.75 + 0.25 * Math.sin((now - selectedAt) / 260);
+  ctx.save();
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  ctx.shadowColor = '#4285f4';
+  ctx.shadowBlur = active ? 16 : 18 * pulse;
+  ctx.strokeStyle = 'rgba(174, 203, 250, 0.95)';
+  ctx.lineWidth = 4;
+  ctx.stroke(path);
+  ctx.shadowBlur = 0;
+  ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+  ctx.lineWidth = 1.6;
+  ctx.stroke(path);
+  ctx.restore();
+}
 
-    if (!drawing && selection) {
-      // spotlight: darken everything outside the selection
-      ctx.save();
-      ctx.fillStyle = 'rgba(0,0,0,0.28)';
-      ctx.fillRect(0, 0, innerWidth, innerHeight);
-      ctx.globalCompositeOperation = 'destination-out';
-      ctx.fill(path);
-      ctx.restore();
-      ctx.save();
-      ctx.fillStyle = 'rgba(255,255,255,0.05)';
-      ctx.fill(path);
-      ctx.restore();
-    }
-
-    const pulse = reducedMotion ? 1 : 0.75 + 0.25 * Math.sin((now - selectedAt) / 260);
-    ctx.save();
-    ctx.lineJoin = 'round';
-    ctx.lineCap = 'round';
-    ctx.shadowColor = '#4285f4';
-    ctx.shadowBlur = drawing ? 16 : 18 * pulse;
-    ctx.strokeStyle = 'rgba(174, 203, 250, 0.95)';
-    ctx.lineWidth = 4;
-    ctx.stroke(path);
-    ctx.shadowBlur = 0;
-    ctx.strokeStyle = 'rgba(255,255,255,0.9)';
-    ctx.lineWidth = 1.6;
-    ctx.stroke(path);
-    ctx.restore();
-  }
-
+function drawSparkles(dt: number) {
   for (let i = sparkles.length - 1; i >= 0; i--) {
     const s = sparkles[i]!;
     s.life += dt;
@@ -428,18 +425,30 @@ function frame(now: number) {
     }
     ctx.restore();
   }
+}
 
-  if (pointerPos && !closing) {
-    ctx.save();
-    ctx.shadowColor = 'rgba(138, 180, 248, 0.95)';
-    ctx.shadowBlur = drawing ? 24 : 16;
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
-    ctx.beginPath();
-    ctx.arc(pointerPos.x, pointerPos.y, drawing ? 6 : 5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-  }
+function drawCursorDot() {
+  if (!pointerPos || closing) return;
+  const active = gesture === 'lasso';
+  ctx.save();
+  ctx.shadowColor = 'rgba(138, 180, 248, 0.95)';
+  ctx.shadowBlur = active ? 24 : 16;
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+  ctx.beginPath();
+  ctx.arc(pointerPos.x, pointerPos.y, active ? 6 : 5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
 
+let lastFrame = performance.now();
+function frame(now: number) {
+  const dt = now - lastFrame;
+  lastFrame = now;
+  ctx.clearRect(0, 0, innerWidth, innerHeight);
+  drawTextHighlight();
+  drawLasso(now);
+  drawSparkles(dt);
+  drawCursorDot();
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
@@ -451,41 +460,38 @@ let downPoint: Point | null = null;
 canvas.addEventListener('pointerdown', (e) => {
   if (busy || closing || !musicUi.hidden) return;
   canvas.setPointerCapture(e.pointerId);
-  clearTranslations();
-  clearTextSel();
-  selection = null;
-  document.body.classList.remove('selected');
+  clearAllSelections();
   const hit = wordAt(e.clientX, e.clientY);
   if (hit) {
     // press landed on text: behave like regular text selection, not lasso
-    textDragging = true;
+    gesture = 'text';
     textSel = { anchor: hit.idx, focus: hit.idx };
     return;
   }
   downPoint = { x: e.clientX, y: e.clientY };
-  drawing = true;
+  gesture = 'lasso';
   points = [downPoint];
 });
 
 canvas.addEventListener('pointermove', (e) => {
-  if (textDragging && textSel) {
+  if (gesture === 'text' && textSel) {
     textSel.focus = nearestWordIdx(e.clientX, e.clientY);
     return;
   }
-  if (!drawing) return;
+  if (gesture !== 'lasso') return;
   const evts = 'getCoalescedEvents' in e ? e.getCoalescedEvents() : [e];
   for (const ev of evts) points.push({ x: ev.clientX, y: ev.clientY });
   spawnSparkles(e.clientX, e.clientY, 2);
 });
 
 canvas.addEventListener('pointerup', (e) => {
-  if (textDragging) {
-    textDragging = false;
+  if (gesture === 'text') {
+    gesture = 'none';
     showTextActions();
     return;
   }
-  if (!drawing) return;
-  drawing = false;
+  if (gesture !== 'lasso') return;
+  gesture = 'none';
   const dist = downPoint ? Math.hypot(e.clientX - downPoint.x, e.clientY - downPoint.y) : 0;
   if (dist < 6 || points.length < 5) {
     tapBloom(e.clientX, e.clientY);
@@ -544,13 +550,16 @@ function finalizeSelection(pts: Point[]) {
 
 /* ---------- crop ---------- */
 
-function cropRegion(box: { x: number; y: number; w: number; h: number }): Promise<ArrayBuffer> {
+// OCR bboxes from cropRegion output are relative to this padded origin;
+// renderTranslations reverses it when placing translation divs.
+const CROP_PAD = 4;
+
+function cropRegion(box: Rect): Promise<ArrayBuffer> {
   const s = pxScale();
-  const pad = 4;
-  const x = Math.max(0, Math.round((box.x - pad) * s));
-  const y = Math.max(0, Math.round((box.y - pad) * s));
-  const w = Math.min(shotCanvas.width - x, Math.round((box.w + pad * 2) * s));
-  const h = Math.min(shotCanvas.height - y, Math.round((box.h + pad * 2) * s));
+  const x = Math.max(0, Math.round((box.x - CROP_PAD) * s));
+  const y = Math.max(0, Math.round((box.y - CROP_PAD) * s));
+  const w = Math.min(shotCanvas.width - x, Math.round((box.w + CROP_PAD * 2) * s));
+  const h = Math.min(shotCanvas.height - y, Math.round((box.h + CROP_PAD * 2) * s));
   if (w <= 0 || h <= 0) return Promise.reject(new Error('selection is off-screen'));
   const c = document.createElement('canvas');
   c.width = w;
@@ -564,20 +573,21 @@ function cropRegion(box: { x: number; y: number; w: number; h: number }): Promis
   });
 }
 
-function fullScreenBox() {
+function fullScreenBox(): Rect {
   return { x: 0, y: 0, w: innerWidth, h: innerHeight };
 }
 
+const selectionBox = () => (selection ? bboxOf(selection) : fullScreenBox());
+
 /* ---------- actions ---------- */
 
-async function runSearch() {
+/** Shared sheet-search flow: busy guard, sheet chrome, spinner, error toast. */
+async function searchInSheet(go: (rect: Rect) => Promise<void>) {
   if (busy) return;
-  const box = selection ? bboxOf(selection) : fullScreenBox();
   setBusy(true);
   const rect = openSheet();
   try {
-    const png = await cropRegion(box);
-    await bridge.lensSearch(png, rect);
+    await go(rect);
     sheetSpinner.hidden = true;
   } catch (err) {
     console.error(err);
@@ -588,9 +598,17 @@ async function runSearch() {
   }
 }
 
+async function runSearch() {
+  const box = selectionBox();
+  await searchInSheet(async (rect) => {
+    const png = await cropRegion(box);
+    await bridge.lensSearch(png, rect);
+  });
+}
+
 async function runTranslate() {
   if (busy || !init) return;
-  const region = selection ? bboxOf(selection) : fullScreenBox();
+  const region = selectionBox();
   setBusy(true, 'Translating…');
   try {
     const png = await cropRegion(region);
@@ -617,17 +635,12 @@ function clearTranslations() {
   translateLayer.hidden = true;
 }
 
-function renderTranslations(
-  lines: OcrLine[],
-  translated: string[],
-  region: { x: number; y: number; w: number; h: number }
-) {
+function renderTranslations(lines: OcrLine[], translated: string[], region: Rect) {
   clearTranslations();
   translateLayer.hidden = false;
   const s = pxScale();
-  const pad = 4;
-  const originX = Math.max(0, region.x - pad);
-  const originY = Math.max(0, region.y - pad);
+  const originX = Math.max(0, region.x - CROP_PAD);
+  const originY = Math.max(0, region.y - CROP_PAD);
   const measure = document.createElement('canvas').getContext('2d')!;
 
   const placed: Array<{ x0: number; y0: number; x1: number; y1: number }> = [];
@@ -757,6 +770,29 @@ function startCapture(stream: MediaStream): Capture {
   };
 }
 
+/** system loopback audio; the video track must be requested, then discarded */
+async function getLoopbackAudio(): Promise<MediaStream> {
+  const stream = await navigator.mediaDevices.getDisplayMedia({ audio: true, video: true });
+  musicStream = stream;
+  stream.getVideoTracks().forEach((t) => {
+    t.stop();
+    stream.removeTrack(t);
+  });
+  if (stream.getAudioTracks().length === 0) throw new Error('no system audio track');
+  return stream;
+}
+
+/** try recognition at each stage while capture continues; null on miss or cancel */
+async function recognizeStaged(cap: Capture): Promise<TrackInfo | null> {
+  for (const secs of MUSIC_STAGES_S) {
+    await cap.until(secs * SAMPLE_RATE);
+    if (musicCancelled) return null;
+    const track = await bridge.recognizeMusic(cap.snapshot().buffer as ArrayBuffer);
+    if (track || musicCancelled) return track;
+  }
+  return null;
+}
+
 async function startMusic() {
   clearTextSel();
   musicUi.hidden = false;
@@ -768,25 +804,8 @@ async function startMusic() {
   bridge.musicMode(true);
   let cap: Capture | null = null;
   try {
-    const stream = await navigator.mediaDevices.getDisplayMedia({
-      audio: true,
-      video: true
-    });
-    musicStream = stream;
-    stream.getVideoTracks().forEach((t) => {
-      t.stop();
-      stream.removeTrack(t);
-    });
-    if (stream.getAudioTracks().length === 0) throw new Error('no system audio track');
-
-    cap = startCapture(stream);
-    let track: TrackInfo | null = null;
-    for (const secs of MUSIC_STAGES_S) {
-      await cap.until(secs * SAMPLE_RATE);
-      if (musicCancelled) return;
-      track = await bridge.recognizeMusic(cap.snapshot().buffer as ArrayBuffer);
-      if (track || musicCancelled) break;
-    }
+    cap = startCapture(await getLoopbackAudio());
+    const track = await recognizeStaged(cap);
     if (musicCancelled) return;
     if (!track) {
       showToast('No match found. Is music playing?');
@@ -866,10 +885,7 @@ window.addEventListener('keydown', (e) => {
     } else if (sheetOpen) {
       closeSheet();
     } else if (textSel || selection || translateLayer.childElementCount > 0) {
-      clearTextSel();
-      selection = null;
-      clearTranslations();
-      document.body.classList.remove('selected');
+      clearAllSelections();
     } else {
       closeOverlay();
     }
@@ -880,7 +896,16 @@ window.addEventListener('keydown', (e) => {
 
 // hook for the CDP verification harness (scratchpad verify scripts)
 (window as unknown as Record<string, unknown>).__sircle = {
-  words: () => words.map((w) => ({ text: w.text, x: (w.x0 + w.x1) / 2, y: (w.y0 + w.y1) / 2 })),
+  words: () =>
+    words.map((w) => ({
+      text: w.text,
+      x: (w.x0 + w.x1) / 2,
+      y: (w.y0 + w.y1) / 2,
+      x0: w.x0,
+      y0: w.y0,
+      x1: w.x1,
+      y1: w.y1
+    })),
   selectedText: () => selectedText(),
   mode: () => mode
 };

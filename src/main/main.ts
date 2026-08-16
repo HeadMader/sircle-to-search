@@ -16,11 +16,12 @@ import {
 import path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { lensUploadRequest } from './lens';
+import { lensUploadRequest, stripSearchCookies } from './lens';
 import { ocrImage } from './ocr';
 import { translateLines } from './translate';
 import { recognizeMusic } from './music';
 import { getSettings, openSettingsWindow, resolveTranslateTarget } from './settings';
+import type { SheetRect } from '../preload/preload';
 
 if (!app.isPackaged) app.commandLine.appendSwitch('remote-debugging-port', '9223');
 
@@ -71,11 +72,12 @@ function closeOverlay() {
   overlay = null;
 }
 
-interface SheetRect {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
+function openExternalAndCloseOverlay(url: string): void {
+  if (!/^https?:\/\//.test(url)) return;
+  // close first: with the always-on-top overlay alive the browser opens
+  // behind it without focus
+  closeOverlay();
+  void shell.openExternal(url);
 }
 
 function openSheetView(win: BrowserWindow, rect: SheetRect): WebContentsView {
@@ -83,11 +85,7 @@ function openSheetView(win: BrowserWindow, rect: SheetRect): WebContentsView {
     const view = new WebContentsView();
     sheetView = view;
     view.webContents.setWindowOpenHandler(({ url: target }) => {
-      if (/^https?:\/\//.test(target)) {
-        // dismiss the always-on-top overlay first or the browser opens under it
-        closeOverlay();
-        void shell.openExternal(target);
-      }
+      openExternalAndCloseOverlay(target);
       return { action: 'deny' };
     });
     const v = view as unknown as { setBorderRadius?: (r: number) => void };
@@ -123,8 +121,19 @@ async function loadInSheet(view: WebContentsView, url: string, options?: Electro
 
 async function showResultsInSheet(win: BrowserWindow, png: Buffer, rect: SheetRect) {
   const view = openSheetView(win, rect);
-  const req = lensUploadRequest(png);
-  await loadInSheet(view, req.url, { postData: req.postData, extraHeaders: req.extraHeaders });
+  const post = () => {
+    const req = lensUploadRequest(png);
+    return loadInSheet(view, req.url, { postData: req.postData, extraHeaders: req.extraHeaders });
+  };
+  try {
+    await post();
+  } catch (err) {
+    // ERR_FAILED: transient network/endpoint flake — one retry, but only if
+    // the sheet wasn't closed mid-load (which also fails the navigation)
+    const alive = view === sheetView && !view.webContents.isDestroyed();
+    if (!/ERR_FAILED/.test(String(err)) || !alive) throw err;
+    await post();
+  }
 }
 
 async function toggleOverlay() {
@@ -161,20 +170,15 @@ async function toggleOverlay() {
       sheetView = null;
     }
   });
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  win.webContents.on('console-message' as any, (...args: any[]) => {
-    const d = args[0];
-    const msg = d && typeof d === 'object' && 'message' in d ? d.message : args[2];
-    console.log('[overlay]', msg);
+  win.webContents.on('console-message', (event) => {
+    console.log('[overlay]', event.message);
   });
   win.webContents.once('did-finish-load', () => {
     if (win.isDestroyed()) return;
     win.webContents.send('overlay:init', {
       png,
-      scaleFactor: display.scaleFactor,
       targetLang: resolveTranslateTarget(),
-      defaultMode: getSettings().defaultMode,
-      shortcut: activeShortcut
+      defaultMode: getSettings().defaultMode
     });
     win.show();
     win.focus();
@@ -182,12 +186,14 @@ async function toggleOverlay() {
   await win.loadFile(path.join(__dirname, 'overlay.html'));
 }
 
+const capture = () => void toggleOverlay().catch(console.error);
+
 function onHotkey() {
   // the low-level hook fires on key auto-repeat too
   const now = Date.now();
   if (now - lastHotkeyAt < 350) return;
   lastHotkeyAt = now;
-  void toggleOverlay().catch(console.error);
+  capture();
 }
 
 function registerFallbackShortcut() {
@@ -261,37 +267,17 @@ function updateTray() {
   if (!app.isReady()) return;
   if (!tray) {
     tray = new Tray(trayIcon());
-    tray.on('click', () => void toggleOverlay().catch(console.error));
+    tray.on('click', capture);
   }
   const label = activeShortcut ? activeShortcut.replace('Super', 'Win') : 'no shortcut';
   tray.setToolTip(`Sircle to Search  (${label})`);
   tray.setContextMenu(
     Menu.buildFromTemplate([
-      { label: `Capture  (${label})`, click: () => void toggleOverlay().catch(console.error) },
+      { label: `Capture  (${label})`, click: capture },
       { label: 'Settings…', click: () => openSettingsWindow() },
       { type: 'separator' },
       { label: 'Quit', click: () => app.quit() }
     ])
-  );
-}
-
-// The NID cookie (minted by the Lens upload itself) makes google.com/search
-// return 403 in an embedded browser; the same request cookieless returns the
-// real results page. Strip cookies from /search navigations only.
-function setupCookieStrip() {
-  session.defaultSession.webRequest.onBeforeSendHeaders(
-    { urls: ['https://www.google.com/*'] },
-    (details, callback) => {
-      const headers = details.requestHeaders;
-      if (
-        details.resourceType === 'mainFrame' &&
-        details.url.startsWith('https://www.google.com/search')
-      ) {
-        const key = Object.keys(headers).find((k) => k.toLowerCase() === 'cookie');
-        if (key) delete headers[key];
-      }
-      callback({ requestHeaders: headers });
-    }
   );
 }
 
@@ -307,28 +293,33 @@ function setupLoopbackAudio() {
   );
 }
 
+function senderWindow(e: { sender: Electron.WebContents }): BrowserWindow | null {
+  const w = BrowserWindow.fromWebContents(e.sender);
+  return w && !w.isDestroyed() ? w : null;
+}
+
 function setupIpc() {
-  ipcMain.handle('lens-search', async (e, png: Uint8Array, rect: SheetRect) => {
-    const win = BrowserWindow.fromWebContents(e.sender);
-    if (!win || win.isDestroyed()) return;
+  ipcMain.handle('lens:search', async (e, png: Uint8Array, rect: SheetRect) => {
+    const win = senderWindow(e);
+    if (!win) return;
     await showResultsInSheet(win, Buffer.from(png), rect);
   });
   ipcMain.on('sheet:close', () => closeSheet());
-  ipcMain.on('copy-text', (_e, text: string) => {
+  ipcMain.on('text:copy', (_e, text: string) => {
     if (typeof text === 'string' && text.length > 0) clipboard.writeText(text);
   });
-  ipcMain.handle('text-search', async (e, query: string, rect: SheetRect) => {
-    const win = BrowserWindow.fromWebContents(e.sender);
-    if (!win || win.isDestroyed() || typeof query !== 'string' || !query.trim()) return;
+  ipcMain.handle('text:search', async (e, query: string, rect: SheetRect) => {
+    const win = senderWindow(e);
+    if (!win || typeof query !== 'string' || !query.trim()) return;
     const view = openSheetView(win, rect);
     await loadInSheet(view, `https://www.google.com/search?q=${encodeURIComponent(query.trim())}`);
   });
   // Music mode shrinks the window to just the card: a fullscreen always-on-top
   // window makes Chrome consider itself occluded and freeze video rendering.
   let fullBounds: Electron.Rectangle | null = null;
-  ipcMain.on('music-mode', (e, on: boolean) => {
-    const win = BrowserWindow.fromWebContents(e.sender);
-    if (!win || win.isDestroyed()) return;
+  ipcMain.on('music:mode', (e, on: boolean) => {
+    const win = senderWindow(e);
+    if (!win) return;
     if (on) {
       fullBounds = win.getBounds();
       const w = 640;
@@ -344,19 +335,14 @@ function setupIpc() {
       fullBounds = null;
     }
   });
-  ipcMain.handle('ocr', async (_e, png: Uint8Array) => ocrImage(Buffer.from(png)));
-  ipcMain.handle('translate', async (_e, lines: string[], target: string) =>
+  ipcMain.handle('ocr:image', async (_e, png: Uint8Array) => ocrImage(Buffer.from(png)));
+  ipcMain.handle('translate:lines', async (_e, lines: string[], target: string) =>
     translateLines(lines, target)
   );
-  ipcMain.handle('recognize-music', async (_e, pcm: ArrayBuffer) =>
+  ipcMain.handle('music:recognize', async (_e, pcm: ArrayBuffer) =>
     recognizeMusic(new Int16Array(pcm))
   );
-  ipcMain.handle('open-url-and-close', async (_e, url: string) => {
-    // close first: with the always-on-top overlay alive the browser opens
-    // behind it without focus
-    closeOverlay();
-    if (/^https?:\/\//.test(url)) await shell.openExternal(url);
-  });
+  ipcMain.handle('shell:open-url', (_e, url: string) => openExternalAndCloseOverlay(url));
   ipcMain.on('overlay:close', () => closeOverlay());
 }
 
@@ -366,10 +352,10 @@ if (!gotLock) {
 } else {
   app.on('second-instance', (_e, argv) => {
     if (argv.includes('--settings')) openSettingsWindow();
-    else void toggleOverlay().catch(console.error);
+    else capture();
   });
   app.whenReady().then(() => {
-    setupCookieStrip();
+    stripSearchCookies(session.defaultSession);
     setupLoopbackAudio();
     setupIpc();
     registerShortcut();

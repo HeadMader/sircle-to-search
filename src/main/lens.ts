@@ -42,3 +42,23 @@ export function lensUploadRequest(png: Buffer): LensUpload {
     extraHeaders: `Content-Type: multipart/form-data; boundary=${boundary}`
   };
 }
+
+// The NID cookie (minted by the Lens upload itself) makes google.com/search
+// return 403 in an embedded browser; the same request cookieless returns the
+// real results page. Strip cookies from /search navigations only.
+export function stripSearchCookies(sess: Electron.Session): void {
+  sess.webRequest.onBeforeSendHeaders(
+    { urls: ['https://www.google.com/*'] },
+    (details, callback) => {
+      const headers = details.requestHeaders;
+      if (
+        details.resourceType === 'mainFrame' &&
+        details.url.startsWith('https://www.google.com/search')
+      ) {
+        const key = Object.keys(headers).find((k) => k.toLowerCase() === 'cookie');
+        if (key) delete headers[key];
+      }
+      callback({ requestHeaders: headers });
+    }
+  );
+}

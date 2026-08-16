@@ -36,42 +36,28 @@ await build({
   packages: 'external'
 });
 
-await build({
-  ...common,
-  entryPoints: ['src/preload/preload.ts'],
-  outfile: 'dist/preload.cjs',
-  platform: 'node',
-  format: 'cjs',
-  external: ['electron']
-});
+for (const name of ['preload', 'settings-preload']) {
+  await build({
+    ...common,
+    entryPoints: [`src/preload/${name}.ts`],
+    outfile: `dist/${name}.cjs`,
+    platform: 'node',
+    format: 'cjs',
+    external: ['electron']
+  });
+}
 
-await build({
-  ...common,
-  entryPoints: ['src/preload/settings-preload.ts'],
-  outfile: 'dist/settings-preload.cjs',
-  platform: 'node',
-  format: 'cjs',
-  external: ['electron']
-});
+for (const name of ['overlay', 'settings']) {
+  await build({
+    ...common,
+    entryPoints: [`src/renderer/${name}.ts`],
+    outfile: `dist/${name}.js`,
+    platform: 'browser',
+    format: 'iife'
+  });
+}
 
-await build({
-  ...common,
-  entryPoints: ['src/renderer/overlay.ts'],
-  outfile: 'dist/overlay.js',
-  platform: 'browser',
-  format: 'iife'
-});
-
-await build({
-  ...common,
-  entryPoints: ['src/renderer/settings.ts'],
-  outfile: 'dist/settings.js',
-  platform: 'browser',
-  format: 'iife'
-});
-
-cpSync('src/renderer/overlay.html', 'dist/overlay.html');
-cpSync('src/renderer/overlay.css', 'dist/overlay.css');
-cpSync('src/renderer/settings.html', 'dist/settings.html');
-cpSync('src/renderer/settings.css', 'dist/settings.css');
+for (const asset of ['overlay.html', 'overlay.css', 'settings.html', 'settings.css']) {
+  cpSync(`src/renderer/${asset}`, `dist/${asset}`);
+}
 console.log('build ok');

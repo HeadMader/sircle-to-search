@@ -64,13 +64,7 @@ option { background: var(--surface-2); color: var(--on-surface); }
   background: var(--surface-2);
 }
 .seg { flex: 1; position: relative; cursor: pointer; }
-.seg input {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  opacity: 0;
-  pointer-events: none;
-}
+.seg input,
 .seg span {
   display: flex;
   align-items: center;
@@ -93,13 +87,6 @@ option { background: var(--surface-2); color: var(--on-surface); }
   cursor: pointer;
 }
 .switch-text { color: var(--on-surface); font-size: 14px; }
-.switch-row input {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  opacity: 0;
-  pointer-events: none;
-}
 .switch {
   position: relative;
   flex: none;

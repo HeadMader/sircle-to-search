@@ -15,8 +15,6 @@ export interface OcrWord {
 export interface OcrLine {
   text: string;
   bbox: OcrBBox;
-  confidence: number;
-  paragraph: number;
   words: OcrWord[];
 }
 
@@ -82,6 +80,14 @@ function unionOf(words: OcrWord[]): OcrBBox | null {
  * raw protobuf gives paragraph→line→word hierarchy with per-word boxes.
  */
 export async function ocrImage(png: Buffer): Promise<OcrLine[]> {
+  const first = await scanOnce(png);
+  if (first.length > 0) return first;
+  // the endpoint occasionally returns an empty result on back-to-back scans
+  await new Promise((r) => setTimeout(r, 350));
+  return scanOnce(png);
+}
+
+async function scanOnce(png: Buffer): Promise<OcrLine[]> {
   const { width: W, height: H } = nativeImage.createFromBuffer(png).getSize();
   const lens = await getLens();
   const flat = await lens.scanByData(new Uint8Array(png), 'image/png');
@@ -90,7 +96,7 @@ export async function ocrImage(png: Buffer): Promise<OcrLine[]> {
   try {
     const layout = lens.__lastResponse?.getObjectsResponse?.()?.getText?.()?.getTextLayout?.();
     const paragraphs: AnyLens[] = layout?.getParagraphsList?.() ?? [];
-    paragraphs.forEach((para, pIdx) => {
+    paragraphs.forEach((para) => {
       for (const line of para.getLinesList()) {
         const words: OcrWord[] = [];
         let text = '';
@@ -105,7 +111,7 @@ export async function ocrImage(png: Buffer): Promise<OcrLine[]> {
         text = text.replace(/\s+/g, ' ').trim();
         const bbox = toPx(line, W, H) ?? unionOf(words);
         if (!text || !bbox || bbox.x1 - bbox.x0 < 4 || bbox.y1 - bbox.y0 < 4) continue;
-        lines.push({ text, bbox, confidence: 100, paragraph: pIdx, words });
+        lines.push({ text, bbox, words });
       }
     });
   } catch (err) {
@@ -124,8 +130,6 @@ export async function ocrImage(png: Buffer): Promise<OcrLine[]> {
       return {
         text: s.text.replace(/\s+/g, ' ').trim(),
         bbox: { x0: p.x, y0: p.y, x1: p.x + p.width, y1: p.y + p.height },
-        confidence: 100,
-        paragraph: 0,
         words: []
       };
     })

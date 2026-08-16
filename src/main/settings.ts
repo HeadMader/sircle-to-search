@@ -19,7 +19,6 @@ const LANG_RE = /^[a-z]{2,3}(-[A-Za-z]{2,4})?$/;
 
 let cached: Settings | null = null;
 let settingsWindow: BrowserWindow | null = null;
-let ipcRegistered = false;
 
 function settingsPath() {
   return path.join(app.getPath('userData'), 'settings.json');
@@ -73,12 +72,8 @@ export function resolveTranslateTarget(): string {
   return app.getLocale().split('-')[0] || 'en';
 }
 
-function registerIpc() {
-  if (ipcRegistered) return;
-  ipcRegistered = true;
-  ipcMain.handle('settings:get', () => getSettings());
-  ipcMain.handle('settings:set', (_e, raw: unknown) => saveSettings(raw));
-}
+ipcMain.handle('settings:get', () => getSettings());
+ipcMain.handle('settings:set', (_e, raw: unknown) => saveSettings(raw));
 
 export function openSettingsWindow(): void {
   if (settingsWindow && !settingsWindow.isDestroyed()) {
@@ -86,7 +81,6 @@ export function openSettingsWindow(): void {
     settingsWindow.focus();
     return;
   }
-  registerIpc();
   const win = new BrowserWindow({
     width: 400,
     height: 480,

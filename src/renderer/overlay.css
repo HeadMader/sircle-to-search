@@ -33,24 +33,22 @@ body.music :is(#shot, #dim, #edge-glow, #bloom, #toolbar, #hint, #lasso, #transl
 }
 body.music #music-ui { background: transparent; }
 
-#shot {
+/* full-viewport fixed layers (explicit sizing per SPEC: a canvas left to its
+   intrinsic size misaligns on scaled displays) */
+#shot, #dim, #edge-glow, #bloom, #lasso, #translate-layer, #music-ui {
   position: fixed;
   inset: 0;
   width: 100vw;
   height: 100vh;
-  pointer-events: none;
-  transition: opacity 260ms ease;
 }
+#shot, #dim, #edge-glow, #bloom, #translate-layer { pointer-events: none; }
+
+#shot { transition: opacity 260ms ease; }
 
 #dim {
-  position: fixed;
-  inset: 0;
-  width: 100vw;
-  height: 100vh;
   background: #000;
   opacity: 0;
   transition: opacity 320ms ease;
-  pointer-events: none;
 }
 body.ready #dim { opacity: 0.2; }
 body.sheet #dim { opacity: 0.32; }
@@ -66,11 +64,6 @@ body.sheet #dim { opacity: 0.32; }
   initial-value: 0deg;
 }
 #edge-glow {
-  position: fixed;
-  inset: 0;
-  width: 100vw;
-  height: 100vh;
-  pointer-events: none;
   opacity: 0;
   --wash-angle: 0deg;
   background:
@@ -95,11 +88,6 @@ body.ready #edge-glow {
 
 /* stronger white bloom from the bottom for the first moment of invocation */
 #bloom {
-  position: fixed;
-  inset: 0;
-  width: 100vw;
-  height: 100vh;
-  pointer-events: none;
   opacity: 0;
   background: radial-gradient(70% 46% at 50% 106%, rgba(255, 255, 255, 0.5), transparent 70%);
   filter: blur(40px);
@@ -111,13 +99,7 @@ body.ready #bloom { animation: bloom-in 1100ms ease-out forwards; }
   100% { opacity: 0; transform: translateY(-10px); }
 }
 
-#lasso {
-  position: fixed;
-  inset: 0;
-  width: 100vw;
-  height: 100vh;
-  cursor: none;
-}
+#lasso { cursor: none; }
 
 #hint {
   position: fixed;
@@ -157,21 +139,24 @@ body.ready:not(.selected):not(.busy):not(.sheet) #hint { opacity: 1; transform: 
 }
 body.ready #toolbar { transform: translate(-50%, 0); opacity: 1; }
 body.sheet #toolbar { opacity: 0; pointer-events: none; }
+/* shared pill-button base (the font shorthand's `inherit` covers the family) */
+.tb-btn, .text-btn, #text-actions button {
+  border: 0;
+  background: transparent;
+  border-radius: 100px;
+  cursor: pointer;
+}
+.tb-btn:hover, #text-actions button:hover { background: rgba(232, 234, 237, 0.08); }
+
 .tb-btn {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 11px 18px;
-  border: 0;
-  border-radius: 100px;
-  background: transparent;
   color: var(--on-surface);
   font: 500 14px/1 inherit;
-  font-family: inherit;
-  cursor: pointer;
   transition: background 150ms ease, color 150ms ease;
 }
-.tb-btn:hover { background: rgba(232, 234, 237, 0.08); }
 .tb-btn.active { background: #a8c7fa; color: #202124; }
 .tb-btn:focus-visible { outline: 2px solid rgb(var(--g-blue)); outline-offset: 1px; }
 
@@ -205,13 +190,6 @@ body.sheet #toolbar { opacity: 0; pointer-events: none; }
   to { opacity: 1; transform: translateX(-50%) scale(1); }
 }
 
-#translate-layer {
-  position: fixed;
-  inset: 0;
-  width: 100vw;
-  height: 100vh;
-  pointer-events: none;
-}
 .tr-line {
   position: absolute;
   display: flex;
@@ -277,10 +255,6 @@ body.sheet #sheet { transform: translate(-50%, 0); }
 .sheet-body .spinner { width: 26px; height: 26px; border-width: 3px; }
 
 #music-ui {
-  position: fixed;
-  inset: 0;
-  width: 100vw;
-  height: 100vh;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -340,14 +314,9 @@ body.sheet #sheet { transform: translate(-50%, 0); }
 #music-artist { font-size: 14px; color: var(--on-surface-dim); margin-top: 4px; }
 .music-actions { display: flex; flex-direction: column; gap: 6px; }
 .text-btn {
-  border: 0;
-  background: transparent;
   color: var(--link);
   font: 500 14px/1 inherit;
-  font-family: inherit;
   padding: 9px 14px;
-  border-radius: 100px;
-  cursor: pointer;
 }
 .text-btn:hover { background: rgba(168, 199, 250, 0.1); }
 
@@ -363,16 +332,10 @@ body.sheet #sheet { transform: translate(-50%, 0); }
   animation: pop-in-plain 180ms cubic-bezier(0.05, 0.7, 0.1, 1);
 }
 #text-actions button {
-  border: 0;
-  background: transparent;
   color: var(--on-surface);
   font: 500 13px/1 inherit;
-  font-family: inherit;
   padding: 8px 14px;
-  border-radius: 100px;
-  cursor: pointer;
 }
-#text-actions button:hover { background: rgba(232, 234, 237, 0.08); }
 #text-actions button:focus-visible { outline: 2px solid rgb(var(--g-blue)); outline-offset: 1px; }
 @keyframes pop-in-plain {
   from { opacity: 0; transform: scale(0.9); }
