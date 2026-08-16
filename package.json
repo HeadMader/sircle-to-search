@@ -1,0 +1,24 @@
+{
+  "name": "sircle-to-search",
+  "productName": "Sircle to Search",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Circle-to-search overlay for Windows: lasso anything, search it with Google Lens, translate the screen, identify playing music.",
+  "main": "dist/main.cjs",
+  "scripts": {
+    "build": "node build.mjs",
+    "typecheck": "tsc --noEmit",
+    "start": "node build.mjs && electron ."
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "electron": "^43.4.0",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2",
+    "ws": "^8.21.3"
+  },
+  "dependencies": {
+    "chrome-lens-ocr": "^4.1.1",
+    "shazam-api": "^0.3.0"
+  }
+}
