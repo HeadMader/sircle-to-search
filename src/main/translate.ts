@@ -1,9 +1,11 @@
-const UA =
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
-const HEADERS = {
-  'User-Agent': UA,
+import { app } from 'electron';
+
+// read at request time: main.ts assigns the clean Chrome UA to
+// userAgentFallback after this module is loaded
+const headers = () => ({
+  'User-Agent': app.userAgentFallback,
   'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8'
-};
+});
 
 export interface TranslateResult {
   detectedLang: string;
@@ -12,22 +14,25 @@ export interface TranslateResult {
 
 /**
  * Free Google Translate endpoints (no API key).
- * Primary: translate_a/single (client=gtx), lines joined with \n.
- * Fallback: translate_a/t (client=dict-chrome-ex), true per-line batching.
+ * Primary: translate_a/t (client=dict-chrome-ex) — detects the source
+ * language PER LINE, which mixed-language screens need (the gtx batch
+ * endpoint detects once for the whole batch; when that matches the target
+ * it echoes every line back untranslated).
+ * Fallback: translate_a/single (client=gtx), lines joined with \n.
  */
 export async function translateLines(lines: string[], targetLang: string): Promise<TranslateResult> {
   if (lines.length === 0) return { detectedLang: '', translatedLines: [] };
   try {
-    return await translateGtx(lines, targetLang);
-  } catch {
     return await translateDictChromeEx(lines, targetLang);
+  } catch {
+    return await translateGtx(lines, targetLang);
   }
 }
 
 async function translateGtx(lines: string[], targetLang: string): Promise<TranslateResult> {
   const res = await fetch(
     `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${encodeURIComponent(targetLang)}&dt=t`,
-    { method: 'POST', headers: HEADERS, body: new URLSearchParams({ q: lines.join('\n') }) }
+    { method: 'POST', headers: headers(), body: new URLSearchParams({ q: lines.join('\n') }) }
   );
   if (!res.ok) throw new Error(`translate gtx HTTP ${res.status}`);
   const data = (await res.json()) as [Array<[string, ...unknown[]]> | null, unknown, string];
@@ -42,7 +47,7 @@ async function translateDictChromeEx(lines: string[], targetLang: string): Promi
   for (const line of lines) body.append('q', line);
   const res = await fetch(
     `https://translate.googleapis.com/translate_a/t?client=dict-chrome-ex&sl=auto&tl=${encodeURIComponent(targetLang)}`,
-    { method: 'POST', headers: HEADERS, body }
+    { method: 'POST', headers: headers(), body }
   );
   if (!res.ok) throw new Error(`translate /t HTTP ${res.status}`);
   const data = (await res.json()) as Array<string | [string, string]>;
