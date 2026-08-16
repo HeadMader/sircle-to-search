@@ -1,0 +1,143 @@
+:root {
+  --g-blue: 66, 133, 244;
+  --surface: #202124;
+  --surface-2: #292a2d;
+  --surface-3: #3c4043;
+  --on-surface: #e8eaed;
+  --on-surface-dim: #9aa0a6;
+  --accent: #a8c7fa;
+  --outline: #5f6368;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; user-select: none; }
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--surface);
+  color: var(--on-surface);
+  font-family: "Google Sans", "Segoe UI Variable Text", "Segoe UI", Roboto, sans-serif;
+  font-size: 14px;
+}
+
+main {
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+  padding: 26px 26px 20px;
+}
+
+h1 {
+  font-size: 20px;
+  font-weight: 500;
+}
+
+.field { display: flex; flex-direction: column; gap: 10px; }
+.field > label:first-child, .field-label {
+  color: var(--on-surface-dim);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+select {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--outline);
+  border-radius: 12px;
+  background: var(--surface-2);
+  color: var(--on-surface);
+  font: inherit;
+  cursor: pointer;
+  transition: background 150ms ease;
+}
+select:hover { background: var(--surface-3); }
+select:focus-visible { outline: 2px solid rgb(var(--g-blue)); outline-offset: 1px; }
+option { background: var(--surface-2); color: var(--on-surface); }
+
+/* segmented control: real radios, visually hidden; the pill span carries the look */
+.segmented {
+  display: flex;
+  gap: 2px;
+  padding: 4px;
+  border-radius: 100px;
+  background: var(--surface-2);
+}
+.seg { flex: 1; position: relative; cursor: pointer; }
+.seg input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+.seg span {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 9px 0;
+  border-radius: 100px;
+  font-weight: 500;
+  transition: background 150ms ease, color 150ms ease;
+}
+.seg:hover input:not(:checked) + span { background: rgba(232, 234, 237, 0.08); }
+.seg input:checked + span { background: var(--accent); color: #202124; }
+.seg input:focus-visible + span { outline: 2px solid rgb(var(--g-blue)); outline-offset: 1px; }
+
+/* toggle switch: real checkbox, visually hidden; the track span carries the look */
+.switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+}
+.switch-text { color: var(--on-surface); font-size: 14px; }
+.switch-row input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+.switch {
+  position: relative;
+  flex: none;
+  width: 44px;
+  height: 24px;
+  border-radius: 100px;
+  border: 1px solid var(--outline);
+  background: var(--surface-3);
+  transition: background 180ms ease, border-color 180ms ease;
+}
+.switch::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--on-surface-dim);
+  transition: transform 180ms cubic-bezier(0.05, 0.7, 0.1, 1), background 180ms ease;
+}
+.switch-row input:checked ~ .switch { background: var(--accent); border-color: var(--accent); }
+.switch-row input:checked ~ .switch::after { transform: translateX(20px); background: #202124; }
+.switch-row input:focus-visible ~ .switch { outline: 2px solid rgb(var(--g-blue)); outline-offset: 2px; }
+
+#saved {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  transform: translate(-50%, 6px);
+  padding: 8px 18px;
+  border-radius: 100px;
+  background: #2d2e31;
+  color: var(--on-surface);
+  font-size: 13px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.4);
+  opacity: 0;
+  transition: opacity 220ms ease, transform 220ms ease;
+  pointer-events: none;
+}
+#saved.show { opacity: 1; transform: translate(-50%, 0); }

@@ -47,12 +47,31 @@ await build({
 
 await build({
   ...common,
+  entryPoints: ['src/preload/settings-preload.ts'],
+  outfile: 'dist/settings-preload.cjs',
+  platform: 'node',
+  format: 'cjs',
+  external: ['electron']
+});
+
+await build({
+  ...common,
   entryPoints: ['src/renderer/overlay.ts'],
   outfile: 'dist/overlay.js',
   platform: 'browser',
   format: 'iife'
 });
 
+await build({
+  ...common,
+  entryPoints: ['src/renderer/settings.ts'],
+  outfile: 'dist/settings.js',
+  platform: 'browser',
+  format: 'iife'
+});
+
 cpSync('src/renderer/overlay.html', 'dist/overlay.html');
 cpSync('src/renderer/overlay.css', 'dist/overlay.css');
+cpSync('src/renderer/settings.html', 'dist/settings.html');
+cpSync('src/renderer/settings.css', 'dist/settings.css');
 console.log('build ok');

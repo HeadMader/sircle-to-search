@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'" />
+  <title>Sircle to Search — Settings</title>
+  <link rel="stylesheet" href="settings.css" />
+</head>
+<body>
+  <main>
+    <h1>Settings</h1>
+
+    <section class="field">
+      <label for="translate-target">Translate to</label>
+      <select id="translate-target">
+        <option value="system">System language</option>
+        <option value="en">English</option>
+        <option value="uk">Українська</option>
+        <option value="ru">Русский</option>
+        <option value="de">Deutsch</option>
+        <option value="fr">Français</option>
+        <option value="es">Español</option>
+        <option value="pl">Polski</option>
+        <option value="it">Italiano</option>
+        <option value="ja">日本語</option>
+        <option value="ko">한국어</option>
+        <option value="zh">中文</option>
+      </select>
+    </section>
+
+    <section class="field">
+      <span class="field-label" id="mode-label">Default action</span>
+      <div class="segmented" role="radiogroup" aria-labelledby="mode-label">
+        <label class="seg">
+          <input type="radio" name="default-mode" value="search" />
+          <span>Search</span>
+        </label>
+        <label class="seg">
+          <input type="radio" name="default-mode" value="translate" />
+          <span>Translate</span>
+        </label>
+      </div>
+    </section>
+
+    <section class="field">
+      <label class="switch-row" for="launch-startup">
+        <span class="switch-text">Start with Windows</span>
+        <input type="checkbox" id="launch-startup" role="switch" />
+        <span class="switch" aria-hidden="true"></span>
+      </label>
+    </section>
+  </main>
+
+  <div id="saved" role="status" aria-live="polite">Saved</div>
+
+  <script src="settings.js"></script>
+</body>
+</html>
