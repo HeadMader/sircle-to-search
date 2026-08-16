@@ -54,6 +54,19 @@ Google's implementation as closely as the desktop allows.
 4. Hint pill "Circle or tap anything to search" above the toolbar.
 5. A soft glowing dot follows the pointer (system cursor hidden on canvas).
 
+### Text selection
+
+- On overlay open the frozen screenshot is OCR'd in the background (Lens);
+  per-line boxes are split into word boxes proportional to measured word
+  widths. The cursor becomes an I-beam over recognized text.
+- Pressing on a word selects it like regular text; dragging extends the
+  selection word-by-word in reading order, highlighted per line. Releasing
+  shows a floating **Copy · Search** chip pill near the selection: Copy puts
+  the text on the clipboard, Search opens a google.com text search in the
+  results sheet.
+- Pressing on a spot with no recognized text falls through to the lasso.
+- Esc clears the text selection first, like any other selection.
+
 ### Lasso
 
 - Freehand stroke: light-blue glowing stroke (white core, #4285f4 halo),
@@ -111,6 +124,15 @@ Google's implementation as closely as the desktop allows.
   (Shazam's signature window caps at 12 s). `shazam-api`'s
   `fullRecognizeSong` in main.
 - Result card: cover art, title, artist; Open = track URL or YouTube search.
+
+## Settings
+
+- Tray → **Settings…** (or `electron . --settings`): small dark window,
+  auto-saving controls persisted to `userData/settings.json` (validated on
+  load and save; corrupt files fall back to defaults):
+  - **Translate to** — target language (default: system language).
+  - **Default action** — Search or Translate as the overlay's initial mode.
+  - **Start with Windows** — login item toggle.
 
 ## Verification
 

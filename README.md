@@ -38,13 +38,16 @@ The app lives in the tray (blue dot icon).
 | Action | How |
 | --- | --- |
 | Open overlay | Win+Space (or click the tray icon) |
-| Search | Circle anything, or tap it |
+| Select text | Press on any text — it selects like regular text; drag to extend; Copy / Search chips appear |
+| Search | Circle anything, or tap a non-text spot |
 | Search whole screen | Enter |
 | Translate | Click **Translate** (translates selection if you circled one) |
 | Identify music | Click **Music** while a song plays — the overlay turns see-through so the video keeps playing visibly |
 | Back / close | Esc (closes results, then selection, then overlay) |
 
-Translation target language follows your Windows display language.
+Tray → **Settings…** to change the translate target language, the default
+action (Search/Translate), and start-with-Windows. Translation target
+defaults to your Windows display language.
 
 ## Verification
 

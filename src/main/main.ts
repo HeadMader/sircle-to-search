@@ -1,6 +1,7 @@
 import {
   app,
   BrowserWindow,
+  clipboard,
   desktopCapturer,
   globalShortcut,
   ipcMain,
@@ -19,6 +20,7 @@ import { lensUploadRequest } from './lens';
 import { ocrImage } from './ocr';
 import { translateLines } from './translate';
 import { recognizeMusic } from './music';
+import { getSettings, openSettingsWindow, resolveTranslateTarget } from './settings';
 
 if (!app.isPackaged) app.commandLine.appendSwitch('remote-debugging-port', '9223');
 
@@ -76,7 +78,7 @@ interface SheetRect {
   h: number;
 }
 
-async function showResultsInSheet(win: BrowserWindow, png: Buffer, rect: SheetRect) {
+function openSheetView(win: BrowserWindow, rect: SheetRect): WebContentsView {
   if (!sheetView || sheetView.webContents.isDestroyed()) {
     const view = new WebContentsView();
     sheetView = view;
@@ -106,17 +108,23 @@ async function showResultsInSheet(win: BrowserWindow, png: Buffer, rect: SheetRe
       });
     }
   }, 440);
-  const req = lensUploadRequest(png);
+  return view;
+}
+
+async function loadInSheet(view: WebContentsView, url: string, options?: Electron.LoadURLOptions) {
   try {
-    await view.webContents.loadURL(req.url, {
-      postData: req.postData,
-      extraHeaders: req.extraHeaders
-    });
+    await view.webContents.loadURL(url, options);
   } catch (err) {
     // ERR_ABORTED: the results page immediately re-navigates itself to its
     // canonical URL — that is the success path, not a failure.
     if (!/ERR_ABORTED/.test(String(err))) throw err;
   }
+}
+
+async function showResultsInSheet(win: BrowserWindow, png: Buffer, rect: SheetRect) {
+  const view = openSheetView(win, rect);
+  const req = lensUploadRequest(png);
+  await loadInSheet(view, req.url, { postData: req.postData, extraHeaders: req.extraHeaders });
 }
 
 async function toggleOverlay() {
@@ -164,7 +172,8 @@ async function toggleOverlay() {
     win.webContents.send('overlay:init', {
       png,
       scaleFactor: display.scaleFactor,
-      targetLang: app.getLocale().split('-')[0] || 'en',
+      targetLang: resolveTranslateTarget(),
+      defaultMode: getSettings().defaultMode,
       shortcut: activeShortcut
     });
     win.show();
@@ -259,6 +268,7 @@ function updateTray() {
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: `Capture  (${label})`, click: () => void toggleOverlay().catch(console.error) },
+      { label: 'Settings…', click: () => openSettingsWindow() },
       { type: 'separator' },
       { label: 'Quit', click: () => app.quit() }
     ])
@@ -304,6 +314,15 @@ function setupIpc() {
     await showResultsInSheet(win, Buffer.from(png), rect);
   });
   ipcMain.on('sheet:close', () => closeSheet());
+  ipcMain.on('copy-text', (_e, text: string) => {
+    if (typeof text === 'string' && text.length > 0) clipboard.writeText(text);
+  });
+  ipcMain.handle('text-search', async (e, query: string, rect: SheetRect) => {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    if (!win || win.isDestroyed() || typeof query !== 'string' || !query.trim()) return;
+    const view = openSheetView(win, rect);
+    await loadInSheet(view, `https://www.google.com/search?q=${encodeURIComponent(query.trim())}`);
+  });
   // Music mode shrinks the window to just the card: a fullscreen always-on-top
   // window makes Chrome consider itself occluded and freeze video rendering.
   let fullBounds: Electron.Rectangle | null = null;
@@ -345,7 +364,10 @@ const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else {
-  app.on('second-instance', () => void toggleOverlay().catch(console.error));
+  app.on('second-instance', (_e, argv) => {
+    if (argv.includes('--settings')) openSettingsWindow();
+    else void toggleOverlay().catch(console.error);
+  });
   app.whenReady().then(() => {
     setupCookieStrip();
     setupLoopbackAudio();

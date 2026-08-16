@@ -5,6 +5,7 @@ export interface OverlayInit {
   scaleFactor: number;
   targetLang: string;
   shortcut: string;
+  defaultMode?: 'search' | 'translate';
 }
 
 export interface OcrLine {
@@ -29,6 +30,11 @@ const bridge = {
   ): Promise<void> => ipcRenderer.invoke('lens-search', new Uint8Array(png), rect),
   sheetClose: () => ipcRenderer.send('sheet:close'),
   musicMode: (on: boolean) => ipcRenderer.send('music-mode', on),
+  copyText: (text: string) => ipcRenderer.send('copy-text', text),
+  textSearch: (
+    query: string,
+    rect: { x: number; y: number; w: number; h: number }
+  ): Promise<void> => ipcRenderer.invoke('text-search', query, rect),
   ocr: (png: ArrayBuffer): Promise<OcrLine[]> => ipcRenderer.invoke('ocr', new Uint8Array(png)),
   translate: (
     lines: string[],

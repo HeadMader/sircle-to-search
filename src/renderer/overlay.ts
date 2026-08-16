@@ -25,6 +25,7 @@ const musicResult = $<HTMLDivElement>('music-result');
 const toast = $<HTMLDivElement>('toast');
 const sheet = $<HTMLDivElement>('sheet');
 const sheetSpinner = $<HTMLSpanElement>('sheet-spinner');
+const textActions = $<HTMLDivElement>('text-actions');
 
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -54,11 +55,13 @@ bridge.onInit((payload) => {
   const bytes = raw instanceof Uint8Array ? raw : new Uint8Array(raw as ArrayBufferLike);
   const copy = bytes.slice();
   const blob = new Blob([copy.buffer as ArrayBuffer], { type: 'image/png' });
+  if (payload.defaultMode) setMode(payload.defaultMode);
   shot.onload = () => {
     shotCanvas.width = shot.naturalWidth;
     shotCanvas.height = shot.naturalHeight;
     shotCtx.drawImage(shot, 0, 0);
     document.body.classList.add('ready');
+    void loadTextMap(); // background OCR: makes on-screen text selectable
   };
   shot.onerror = (e) => console.log('overlay: shot FAILED to load', String(e));
   shot.src = URL.createObjectURL(blob);
@@ -120,6 +123,135 @@ function closeSheet() {
   bridge.sheetClose();
 }
 
+/* ---------- text selection (Google-style: press on text selects it) ---------- */
+
+interface Word {
+  text: string;
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+  idx: number;
+  lineIdx: number;
+}
+
+let words: Word[] = [];
+let textSel: { anchor: number; focus: number } | null = null;
+let textDragging = false;
+
+async function loadTextMap() {
+  try {
+    const png = await cropRegion(fullScreenBox());
+    const lines = await bridge.ocr(png);
+    const s = pxScale();
+    const measure = document.createElement('canvas').getContext('2d')!;
+    words = [];
+    lines.forEach((line, lineIdx) => {
+      const x0 = line.bbox.x0 / s;
+      const y0 = line.bbox.y0 / s;
+      const x1 = line.bbox.x1 / s;
+      const y1 = line.bbox.y1 / s;
+      const parts = line.text.split(' ').filter(Boolean);
+      if (parts.length === 0) return;
+      const h = y1 - y0;
+      measure.font = `${Math.max(8, h * 0.75)}px "Segoe UI", Roboto, sans-serif`;
+      const widths = parts.map((p) => Math.max(1, measure.measureText(p).width));
+      const spaceW = measure.measureText(' ').width;
+      const total = widths.reduce((a, b) => a + b, 0) + spaceW * (parts.length - 1);
+      const k = (x1 - x0) / total;
+      let x = x0;
+      parts.forEach((text, i) => {
+        const w = widths[i]! * k;
+        words.push({ text, x0: x, y0, x1: x + w, y1, idx: words.length, lineIdx });
+        x += w + spaceW * k;
+      });
+    });
+  } catch {
+    /* no text map: everything stays lasso-selectable */
+  }
+}
+
+function wordAt(x: number, y: number): Word | null {
+  for (const w of words) {
+    if (x >= w.x0 - 2 && x <= w.x1 + 2 && y >= w.y0 - 3 && y <= w.y1 + 3) return w;
+  }
+  return null;
+}
+
+/** maps a free cursor position to the nearest word in reading order */
+function nearestWordIdx(x: number, y: number): number {
+  const direct = wordAt(x, y);
+  if (direct) return direct.idx;
+  let best = 0;
+  let bestD = Infinity;
+  for (const w of words) {
+    const cx = Math.max(w.x0, Math.min(x, w.x1));
+    const cy = Math.max(w.y0, Math.min(y, w.y1));
+    const d = (cx - x) ** 2 + (cy - y) ** 2 * 4;
+    if (d < bestD) {
+      bestD = d;
+      best = w.idx;
+    }
+  }
+  return best;
+}
+
+function selectedWords(): Word[] {
+  if (!textSel) return [];
+  const lo = Math.min(textSel.anchor, textSel.focus);
+  const hi = Math.max(textSel.anchor, textSel.focus);
+  return words.slice(lo, hi + 1);
+}
+
+function selectedText(): string {
+  const byLine = new Map<number, string[]>();
+  for (const w of selectedWords()) {
+    byLine.set(w.lineIdx, [...(byLine.get(w.lineIdx) ?? []), w.text]);
+  }
+  return [...byLine.values()].map((l) => l.join(' ')).join('\n');
+}
+
+function clearTextSel() {
+  textSel = null;
+  textDragging = false;
+  textActions.hidden = true;
+}
+
+function showTextActions() {
+  const sel = selectedWords();
+  if (sel.length === 0) return;
+  const minX = Math.min(...sel.map((w) => w.x0));
+  const minY = Math.min(...sel.map((w) => w.y0));
+  const maxY = Math.max(...sel.map((w) => w.y1));
+  textActions.hidden = false;
+  const left = Math.max(8, Math.min(minX, innerWidth - 180));
+  const top = minY > 56 ? minY - 48 : maxY + 10;
+  textActions.style.left = `${left}px`;
+  textActions.style.top = `${top}px`;
+}
+
+$<HTMLButtonElement>('ta-copy').addEventListener('click', () => {
+  const text = selectedText();
+  if (!text) return;
+  bridge.copyText(text);
+  showToast('Copied');
+});
+$<HTMLButtonElement>('ta-search').addEventListener('click', () => {
+  const query = selectedText().replace(/\n/g, ' ');
+  if (!query || busy) return;
+  setBusy(true);
+  const rect = openSheet();
+  textActions.hidden = true;
+  bridge
+    .textSearch(query, rect)
+    .then(() => (sheetSpinner.hidden = true))
+    .catch(() => {
+      closeSheet();
+      showToast('Search failed. Check your connection and try again.');
+    })
+    .finally(() => setBusy(false));
+});
+
 /* ---------- lasso drawing ---------- */
 
 interface Sparkle {
@@ -176,10 +308,16 @@ function bboxOf(pts: Point[]) {
   return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
 }
 
-/* glowing dot that replaces the cursor over the canvas */
+/* glowing dot that replaces the cursor over the canvas; I-beam over text */
 let pointerPos: Point | null = null;
 window.addEventListener('pointermove', (e) => {
-  pointerPos = e.target === canvas ? { x: e.clientX, y: e.clientY } : null;
+  if (e.target !== canvas) {
+    pointerPos = null;
+    return;
+  }
+  const overText = !drawing && wordAt(e.clientX, e.clientY) !== null;
+  canvas.style.cursor = overText ? 'text' : 'none';
+  pointerPos = overText ? null : { x: e.clientX, y: e.clientY };
 });
 window.addEventListener('pointerleave', () => (pointerPos = null));
 
@@ -188,6 +326,29 @@ function frame(now: number) {
   const dt = now - lastFrame;
   lastFrame = now;
   ctx.clearRect(0, 0, innerWidth, innerHeight);
+
+  if (textSel) {
+    // per-line highlight rects, like regular text selection
+    const byLine = new Map<number, { x0: number; y0: number; x1: number; y1: number }>();
+    for (const w of selectedWords()) {
+      const r = byLine.get(w.lineIdx);
+      if (!r) byLine.set(w.lineIdx, { x0: w.x0, y0: w.y0, x1: w.x1, y1: w.y1 });
+      else {
+        r.x0 = Math.min(r.x0, w.x0);
+        r.y0 = Math.min(r.y0, w.y0);
+        r.x1 = Math.max(r.x1, w.x1);
+        r.y1 = Math.max(r.y1, w.y1);
+      }
+    }
+    ctx.save();
+    ctx.fillStyle = 'rgba(138, 180, 248, 0.4)';
+    for (const r of byLine.values()) {
+      ctx.beginPath();
+      ctx.roundRect(r.x0 - 2, r.y0 - 2, r.x1 - r.x0 + 4, r.y1 - r.y0 + 4, 3);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
 
   const activePts = drawing ? points : selection;
   if (activePts && activePts.length > 1) {
@@ -274,15 +435,27 @@ let downPoint: Point | null = null;
 canvas.addEventListener('pointerdown', (e) => {
   if (busy || closing || !musicUi.hidden) return;
   canvas.setPointerCapture(e.pointerId);
+  clearTranslations();
+  clearTextSel();
+  selection = null;
+  document.body.classList.remove('selected');
+  const hit = wordAt(e.clientX, e.clientY);
+  if (hit) {
+    // press landed on text: behave like regular text selection, not lasso
+    textDragging = true;
+    textSel = { anchor: hit.idx, focus: hit.idx };
+    return;
+  }
   downPoint = { x: e.clientX, y: e.clientY };
   drawing = true;
   points = [downPoint];
-  selection = null;
-  clearTranslations();
-  document.body.classList.remove('selected');
 });
 
 canvas.addEventListener('pointermove', (e) => {
+  if (textDragging && textSel) {
+    textSel.focus = nearestWordIdx(e.clientX, e.clientY);
+    return;
+  }
   if (!drawing) return;
   const evts = 'getCoalescedEvents' in e ? e.getCoalescedEvents() : [e];
   for (const ev of evts) points.push({ x: ev.clientX, y: ev.clientY });
@@ -290,6 +463,11 @@ canvas.addEventListener('pointermove', (e) => {
 });
 
 canvas.addEventListener('pointerup', (e) => {
+  if (textDragging) {
+    textDragging = false;
+    showTextActions();
+    return;
+  }
   if (!drawing) return;
   drawing = false;
   const dist = downPoint ? Math.hypot(e.clientX - downPoint.x, e.clientY - downPoint.y) : 0;
@@ -548,6 +726,7 @@ function startCapture(stream: MediaStream): Capture {
 }
 
 async function startMusic() {
+  clearTextSel();
   musicUi.hidden = false;
   musicListening.hidden = false;
   musicResult.hidden = true;
@@ -654,7 +833,8 @@ window.addEventListener('keydown', (e) => {
       hideMusic();
     } else if (sheetOpen) {
       closeSheet();
-    } else if (selection || translateLayer.childElementCount > 0) {
+    } else if (textSel || selection || translateLayer.childElementCount > 0) {
+      clearTextSel();
       selection = null;
       clearTranslations();
       document.body.classList.remove('selected');
@@ -665,6 +845,13 @@ window.addEventListener('keydown', (e) => {
     void runSearch();
   }
 });
+
+// hook for the CDP verification harness (scratchpad verify scripts)
+(window as unknown as Record<string, unknown>).__sircle = {
+  words: () => words.map((w) => ({ text: w.text, x: (w.x0 + w.x1) / 2, y: (w.y0 + w.y1) / 2 })),
+  selectedText: () => selectedText(),
+  mode: () => mode
+};
 
 function closeOverlay() {
   if (closing) return;
