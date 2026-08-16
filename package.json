@@ -8,7 +8,8 @@
   "scripts": {
     "build": "node build.mjs",
     "typecheck": "tsc --noEmit",
-    "start": "node build.mjs && electron ."
+    "start": "node build.mjs && electron .",
+    "e2e": "node tools/e2e.mjs all"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",
