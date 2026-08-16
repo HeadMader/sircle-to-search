@@ -1,51 +1,132 @@
 import { nativeImage } from 'electron';
 
-export interface OcrLine {
-  text: string;
-  bbox: { x0: number; y0: number; x1: number; y1: number };
-  confidence: number;
+export interface OcrBBox {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
 }
 
-interface LensSegment {
+export interface OcrWord {
   text: string;
-  boundingBox: { centerPerX: number; centerPerY: number; perWidth: number; perHeight: number };
+  bbox: OcrBBox;
+}
+
+export interface OcrLine {
+  text: string;
+  bbox: OcrBBox;
+  confidence: number;
+  paragraph: number;
+  words: OcrWord[];
 }
 
 // chrome-lens-ocr is ESM-only; the Function wrapper keeps esbuild's CJS output
 // from rewriting this into a require() call, which cannot load ESM.
 const dynamicImport = new Function('m', 'return import(m)') as (
   m: string
-) => Promise<{ default: new () => { scanByBuffer(b: Buffer): Promise<{ segments: LensSegment[] }> } }>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+) => Promise<any>;
 
-let lensPromise: ReturnType<typeof createLens> | null = null;
-function createLens() {
-  return dynamicImport('chrome-lens-ocr').then(({ default: Lens }) => new Lens());
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AnyLens = any;
+
+let lensPromise: Promise<AnyLens> | null = null;
+function getLens(): Promise<AnyLens> {
+  // One shared instance (cookie reuse). _sendProtoRequest is patched to stash
+  // the raw protobuf response: the library flattens it to line segments and
+  // drops the per-word geometry we need.
+  lensPromise ??= dynamicImport('chrome-lens-ocr').then(({ default: Lens }) => {
+    const lens = new Lens();
+    const orig = lens._sendProtoRequest.bind(lens);
+    lens._sendProtoRequest = async (serialized: unknown) => {
+      const resp = await orig(serialized);
+      lens.__lastResponse = resp;
+      return resp;
+    };
+    return lens;
+  });
+  return lensPromise;
+}
+
+const NORMALIZED = 1; // proto.lens.CoordinateType.NORMALIZED
+
+function toPx(msg: AnyLens, W: number, H: number): OcrBBox | null {
+  if (!msg?.hasGeometry?.() || !msg.getGeometry().hasBoundingBox()) return null;
+  const b = msg.getGeometry().getBoundingBox();
+  if (b.getCoordinateType() !== NORMALIZED) return null;
+  const cx = b.getCenterX() * W;
+  const cy = b.getCenterY() * H;
+  const w = b.getWidth() * W;
+  const h = b.getHeight() * H;
+  return {
+    x0: Math.max(0, Math.round(cx - w / 2)),
+    y0: Math.max(0, Math.round(cy - h / 2)),
+    x1: Math.min(W, Math.round(cx + w / 2)),
+    y1: Math.min(H, Math.round(cy + h / 2))
+  };
+}
+
+function unionOf(words: OcrWord[]): OcrBBox | null {
+  if (words.length === 0) return null;
+  return {
+    x0: Math.min(...words.map((w) => w.bbox.x0)),
+    y0: Math.min(...words.map((w) => w.bbox.y0)),
+    x1: Math.max(...words.map((w) => w.bbox.x1)),
+    y1: Math.max(...words.map((w) => w.bbox.y1))
+  };
 }
 
 /**
- * OCR via Google Lens — the same engine Google's screen translate uses.
- * One shared instance so Google's NID cookie is reused between scans.
- * ponystack: full-screen scans downscale internally to 1200px; tiling the
- * image into quadrants would keep small text sharp if quality ever lags.
+ * OCR via Google Lens at FULL native resolution: scanByData bypasses the
+ * library's 1200px downscale (the endpoint accepts full screenshots), and the
+ * raw protobuf gives paragraph→line→word hierarchy with per-word boxes.
  */
 export async function ocrImage(png: Buffer): Promise<OcrLine[]> {
-  const { width, height } = nativeImage.createFromBuffer(png).getSize();
-  lensPromise ??= createLens();
-  const lens = await lensPromise;
-  const { segments } = await lens.scanByBuffer(png);
-  return (segments ?? [])
-    .map(({ text, boundingBox: b }) => {
-      const x0 = (b.centerPerX - b.perWidth / 2) * width;
-      const y0 = (b.centerPerY - b.perHeight / 2) * height;
+  const { width: W, height: H } = nativeImage.createFromBuffer(png).getSize();
+  const lens = await getLens();
+  const flat = await lens.scanByData(new Uint8Array(png), 'image/png');
+
+  const lines: OcrLine[] = [];
+  try {
+    const layout = lens.__lastResponse?.getObjectsResponse?.()?.getText?.()?.getTextLayout?.();
+    const paragraphs: AnyLens[] = layout?.getParagraphsList?.() ?? [];
+    paragraphs.forEach((para, pIdx) => {
+      for (const line of para.getLinesList()) {
+        const words: OcrWord[] = [];
+        let text = '';
+        const wl: AnyLens[] = line.getWordsList();
+        for (let i = 0; i < wl.length; i++) {
+          const w = wl[i];
+          const plain: string = w.getPlainText();
+          text += plain + (w.hasTextSeparator() ? w.getTextSeparator() : i < wl.length - 1 ? ' ' : '');
+          const bbox = toPx(w, W, H);
+          if (bbox && plain.trim()) words.push({ text: plain.trim(), bbox });
+        }
+        text = text.replace(/\s+/g, ' ').trim();
+        const bbox = toPx(line, W, H) ?? unionOf(words);
+        if (!text || !bbox || bbox.x1 - bbox.x0 < 4 || bbox.y1 - bbox.y0 < 4) continue;
+        lines.push({ text, bbox, confidence: 100, paragraph: pIdx, words });
+      }
+    });
+  } catch (err) {
+    console.warn('word-level OCR extraction failed, using line segments:', err);
+  }
+  if (lines.length > 0) return lines;
+
+  // fallback: the library's flattened line segments (still full-resolution)
+  interface FlatSegment {
+    text: string;
+    boundingBox: { pixelCoords: { x: number; y: number; width: number; height: number } };
+  }
+  return ((flat.segments ?? []) as FlatSegment[])
+    .map((s) => {
+      const p = s.boundingBox.pixelCoords;
       return {
-        text: text.replace(/\s+/g, ' ').trim(),
-        bbox: {
-          x0: Math.max(0, Math.round(x0)),
-          y0: Math.max(0, Math.round(y0)),
-          x1: Math.min(width, Math.round(x0 + b.perWidth * width)),
-          y1: Math.min(height, Math.round(y0 + b.perHeight * height))
-        },
-        confidence: 100
+        text: s.text.replace(/\s+/g, ' ').trim(),
+        bbox: { x0: p.x, y0: p.y, x1: p.x + p.width, y1: p.y + p.height },
+        confidence: 100,
+        paragraph: 0,
+        words: []
       };
     })
     .filter((l) => l.text.length > 0 && l.bbox.x1 - l.bbox.x0 > 3 && l.bbox.y1 - l.bbox.y0 > 3);

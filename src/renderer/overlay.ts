@@ -147,6 +147,22 @@ async function loadTextMap() {
     const measure = document.createElement('canvas').getContext('2d')!;
     words = [];
     lines.forEach((line, lineIdx) => {
+      if (line.words.length > 0) {
+        // real per-word boxes from the OCR engine
+        for (const w of line.words) {
+          words.push({
+            text: w.text,
+            x0: w.bbox.x0 / s,
+            y0: w.bbox.y0 / s,
+            x1: w.bbox.x1 / s,
+            y1: w.bbox.y1 / s,
+            idx: words.length,
+            lineIdx
+          });
+        }
+        return;
+      }
+      // fallback: split the line box proportionally to measured word widths
       const x0 = line.bbox.x0 / s;
       const y0 = line.bbox.y0 / s;
       const x1 = line.bbox.x1 / s;
@@ -614,9 +630,25 @@ function renderTranslations(
   const originY = Math.max(0, region.y - pad);
   const measure = document.createElement('canvas').getContext('2d')!;
 
+  const placed: Array<{ x0: number; y0: number; x1: number; y1: number }> = [];
+  const overlaps = (b: { x0: number; y0: number; x1: number; y1: number }) =>
+    placed.some((p) => {
+      const ix = Math.min(b.x1, p.x1) - Math.max(b.x0, p.x0);
+      const iy = Math.min(b.y1, p.y1) - Math.max(b.y0, p.y0);
+      if (ix <= 0 || iy <= 0) return false;
+      const inter = ix * iy;
+      const union = (b.x1 - b.x0) * (b.y1 - b.y0) + (p.x1 - p.x0) * (p.y1 - p.y0) - inter;
+      return inter / union > 0.55;
+    });
+
   lines.forEach((line, i) => {
     const text = translated[i]?.trim();
     if (!text) return;
+    // untranslated content (URLs, numbers, already-target-language text)
+    // reads better as the untouched original
+    if (text.toLowerCase() === line.text.trim().toLowerCase()) return;
+    if (overlaps(line.bbox)) return;
+    placed.push(line.bbox);
     const x = originX + line.bbox.x0 / s;
     const y = originY + line.bbox.y0 / s;
     const w = (line.bbox.x1 - line.bbox.x0) / s;
